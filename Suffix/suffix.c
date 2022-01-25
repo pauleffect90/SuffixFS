@@ -1,14 +1,13 @@
 #line 0 "SUFFIX"
-#include <memory.h>
-#include <string.h>
+#include "string.h"
 #include "suffix.h"
+#include "stdio.h"
 #include "Internal/Inc/sfs_defines.h"
-
+#include "Internal/Inc/sfs_driver.h"
 
 #define MOD(X, Y) ((X) & ((Y)-1))
 
-#include "stdio.h"
-#include "Internal/Inc/sfs_driver.h"
+
 
 
 
@@ -77,19 +76,21 @@ PUBLIC int SUFFIX_Mount(const uint8_t* badBlockBitmap)
     // FIND START POSITION
     GetAvailableBlocks();
 
-//    SUFFIX_FileCreate("test.mp3", 1000, 1);
-//    uint8_t testData[4224];
+
+//	SUFFIX_FileCreate("final.opus", 2030, 1);
+//	uint8_t testData[4224];
+//	for (int i = 0; i < 253; ++i)
+//	{
+//		memset(testData, 0xFF-i, 4224);
+//		SUFFIX_FileAppend(testData, 4224 - sizeof(SFS_HEADER_typedef));
+//	}
+//
+//    SUFFIX_FileCreate("recording.mp3", 2000, 1);
 //    for (int i = 0; i < 128; ++i)
 //    {
 //        memset(testData, 0xFF-i, 4224);
 //        SUFFIX_FileAppend(testData, 4224 - sizeof(SFS_HEADER_typedef));
 //    }
-
-    for (int i = 0; i < 4095; ++i)
-    {
-        // READ FILE ID
-    }
-
 
     return SFS_OK;
 }
@@ -97,27 +98,39 @@ PUBLIC int SUFFIX_Mount(const uint8_t* badBlockBitmap)
 
 PUBLIC int SUFFIX_FileCreate(const char* name, uint32_t timestamp, uint32_t metadata)
 {
-    if(this.File.Address.Block == this.EndBlock)
-    {
-        LOG("OUT OF SPACE");
-    }
-    else
-    {
-        LOG_SUCCESS("CREATING FILE %s AT B%04u", name, this.File.Address.Block);
-        this.File.Address.Page = 0;
-    }
-    FILE_typedef file =
-        {
-        .Timestamp = timestamp,
-        .Metadata = metadata,
-        };
-    strcpy(file.Filename, name);
-    SFSD_WritePage(this.File.Address.Block, this.File.Address.Page, &file, sizeof(file));
-    IncrementAddressEx();
-    MarkBlockAsUsed(this.File.Address.Block);
-    this.File.Header.FID = timestamp;
-    this.File.Header.ChunkID = 0;
-    return SFS_OK;
+	if (this.File.Address.Page != 0)
+	{
+		this.File.Address.Page = 63;
+		if (IncrementAddressEx() != SFS_OK) return SFS_Error;
+	}
+	if (this.File.Address.Block == this.EndBlock)
+	{
+		LOG("OUT OF SPACE");
+		return SFS_Error;
+	}
+	else
+	{
+
+		LOG_SUCCESS("CREATING FILE %s AT B%04u", name, this.File.Address.Block);
+		this.File.Address.Page = 0;
+	}
+	FILE_typedef file =
+			{
+					.Header =
+							{
+									.ChunkID = 0,
+									.FID = timestamp,
+							},
+					.Timestamp = timestamp,
+					.Metadata = metadata,
+			};
+	strcpy(file.Filename, name);
+	SFSD_WritePage(this.File.Address.Block, this.File.Address.Page, &file, sizeof(file));
+	IncrementAddressEx();
+	MarkBlockAsUsed(this.File.Address.Block);
+	this.File.Header.FID = timestamp;
+	this.File.Header.ChunkID = 1;
+	return SFS_OK;
 }
 
 PUBLIC int SUFFIX_FileAppend(uint8_t* data, int length)
@@ -130,6 +143,129 @@ PUBLIC int SUFFIX_FileAppend(uint8_t* data, int length)
     ++this.File.Header.ChunkID;
     IncrementAddressEx();
     return SFS_OK;
+}
+
+int SUFFIX_FilesList(void(onNewFileFound(const char* name, uint32_t timestamp, uint32_t metadata, uint16_t startBlock)))
+{
+	for (int i = 8; i < 4095; ++i)
+	{
+		// READ FILE ID
+		if (IsBlockHealthy(i) != SFS_OK) continue;
+		if (IsBlockFree(i) == SFS_OK) continue;
+		// USED, HEALTHY BLOCKS
+		FILE_typedef file;
+		SFSD_ReadPage(i, 0, &file, sizeof(file));
+		if (file.Header.ChunkID == 0U)
+		{
+			onNewFileFound(file.Filename, file.Timestamp, file.Metadata, i);
+		}
+	}
+	return SFS_OK;
+}
+
+PUBLIC int SUFFIX_FileSize(uint32_t fileID, uint16_t startBlock, int* size)
+{
+
+	// FIND FILE END
+	uint16_t currentBlock = startBlock;
+	uint16_t lastBlock = currentBlock;
+	uint16_t lastPage = 0;
+	for (;;)
+	{
+		if(IsBlockHealthy(currentBlock) != SFS_OK) continue;
+		if(IsBlockFree(currentBlock) == SFS_OK) continue;
+		// ADVANCE POSITION
+		// CHECK FOR OVERFLOW
+		if(++currentBlock == 4096) currentBlock = 8;
+		// CHECK FOR REACHED START POSITION
+		if(currentBlock == startBlock) break;
+		// CHECK FILE ID
+		SFS_HEADER_typedef header;
+		SFSD_ReadPage(currentBlock, 0, &header, sizeof(header));
+		if(header.FID == fileID) // FOUND LAST BLOCK
+		{
+			lastBlock = currentBlock;
+		}
+		else
+		{
+			for (int i = 0; i < 63; ++i)
+			{
+				SFSD_ReadPage(lastBlock, i, &header, sizeof(header));
+				if(header.FID != fileID) break;
+				lastPage = i;
+			}
+			break;
+		}
+	}
+	SFS_HEADER_typedef header;
+	SFSD_ReadPage(lastBlock, lastPage, &header, sizeof(header));
+
+	*size = header.ChunkID * 4224;
+
+	return SFS_OK;
+}
+
+int SUFFIX_FileOpen(uint16_t startBlock)
+{
+	SFSD_ReadPage(startBlock, 0, &this.File, sizeof(this.File));
+	this.File.Address.Block = startBlock;
+	this.File.Address.Page = 1;
+	return SFS_OK;
+}
+
+int SUFFIX_SeekToChunkID(uint32_t chunkID)
+{
+	int block = chunkID / 64U + this.File.Address.Block;
+	int page = chunkID % 64;
+
+	LOG("CHUNK %u CORRESPONDS TO B%04u P%04u", chunkID, chunkID / 64U + this.File.Address.Block, chunkID %64);
+	SFS_HEADER_typedef header;
+	for(;;)
+	{
+		SFSD_ReadPage(block, page, &header, sizeof(header));
+		if(header.FID != this.File.Header.FID) break;
+		if(chunkID == header.ChunkID)
+		{
+			LOG("FOUND CHUNK");
+			this.File.Address.Block = block;
+			this.File.Address.Page = page;
+			break;
+		}
+		if(chunkID < header.ChunkID)
+		{
+			LOG("NEXT CHUNK FOUND");
+			this.File.Address.Block = block;
+			this.File.Address.Page = page;
+		}
+		IncrementAddress(&block, &page);
+	}
+	return SFS_OK;
+}
+
+
+PUBLIC int SUFFIX_FileRead(uint8_t* data, uint16_t length)
+{
+	LOG("READING FROM %04u %04u", this.File.Address.Block, this.File.Address.Page);
+
+	SFSD_ReadPage(this.File.Address.Block, this.File.Address.Page, data, 4224);
+	SFS_HEADER_typedef header;
+	memcpy(&header, data, sizeof(header));
+	if(header.FID != this.File.Header.FID)
+	{
+		LOG_ERROR("FOUND FILE END AT %04u %04u", this.File.Address.Block, this.File.Address.Page);
+		return SFS_Error;
+	}
+	for(;;)
+	{
+		if(++this.File.Address.Page == 64)
+		{
+			this.File.Address.Page = 0;
+			if(++this.File.Address.Block == 4096) this.File.Address.Block = 0;
+			if(IsBlockHealthy(this.File.Address.Block) != SFS_OK) continue;
+		}
+		break;
+	}
+	return SFS_OK;
 }
 
 

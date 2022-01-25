@@ -47,6 +47,7 @@ typedef struct
 
 typedef struct
 {
+		SFS_HEADER_typedef Header;
     char        Filename[128];
     uint32_t    Timestamp;
     uint32_t    Metadata;
