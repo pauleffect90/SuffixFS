@@ -20,7 +20,7 @@ int main()
     SUFFIX_Mount(bitMap);
 //    SUFFIX_FilesList(OnNewFileFound);
     SUFFIX_FileOpen(8);
-
+    SUFFIX_SeekToChunkID(5);
     for(;;)
     {
         uint8_t data[4224];

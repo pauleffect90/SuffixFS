@@ -125,7 +125,33 @@ PUBLIC int SUFFIX_FileCreate(const char* name, uint32_t timestamp, uint32_t meta
 					.Metadata = metadata,
 			};
 	strcpy(file.Filename, name);
-	SFSD_WritePage(this.File.Address.Block, this.File.Address.Page, &file, sizeof(file));
+    uint8_t status = 0;
+    for(;;)
+    {
+        switch(SFSD_WritePage(this.File.Address.Block, this.File.Address.Page, &file, sizeof(file)))
+        {
+            case SFS_OK:
+                status = 1;
+                break;
+            case SFS_ERROR_ECC:
+                SFSD_FormatBlock(this.File.Address.Block);
+                break;
+            case SFS_ERROR_PAGE_PROGRAM:
+                MarkBlockAsBad(this.File.Address.Block);
+                if(IncrementAddressEx() == SFS_OK)
+                {
+                    break;
+                }
+                else
+                {
+                    status = 2;
+                    break;
+                }
+            default: break;
+        }
+        if(status != 0) break;
+    }
+    if(status == 2) return SFS_Error;
 	IncrementAddressEx();
 	MarkBlockAsUsed(this.File.Address.Block);
 	this.File.Header.FID = timestamp;
@@ -139,7 +165,30 @@ PUBLIC int SUFFIX_FileAppend(uint8_t* data, int length)
     uint8_t buffer[4224];
     memcpy(buffer + sizeof(this.File.Header), data, length);
     memcpy(buffer, &this.File.Header, sizeof(this.File.Header));
-    SFSD_WritePage(this.File.Address.Block, this.File.Address.Page, buffer, length + sizeof(this.File.Header));
+    uint8_t status = 0;
+    for(;;)
+    {
+        switch(SFSD_WritePage(this.File.Address.Block, this.File.Address.Page, buffer, length + sizeof(this.File.Header)))
+        {
+            case SFS_OK:
+                status = 1;
+                break;
+            case SFS_ERROR_ECC:
+            case SFS_ERROR_PAGE_PROGRAM:
+                if(this.File.Address.Page == 0)
+                {
+                    MarkBlockAsBad(this.File.Address.Block);
+                }
+                if(IncrementAddressEx() != SFS_OK)
+                {
+                    status = 2;
+                }
+                break;
+            default: break;
+        }
+        if(status != 0) break;
+    }
+    if(status == 2) return SFS_Error;
     ++this.File.Header.ChunkID;
     IncrementAddressEx();
     return SFS_OK;
@@ -247,7 +296,16 @@ PUBLIC int SUFFIX_FileRead(uint8_t* data, uint16_t length)
 {
 	LOG("READING FROM %04u %04u", this.File.Address.Block, this.File.Address.Page);
 
-	SFSD_ReadPage(this.File.Address.Block, this.File.Address.Page, data, 4224);
+    for(;;)
+    {
+        if(SFSD_ReadPage(this.File.Address.Block, this.File.Address.Page, data, 4224) != SFS_OK)
+        {
+            // READ NEXT ADDRESS
+            break;
+        }
+
+    }
+
 	SFS_HEADER_typedef header;
 	memcpy(&header, data, sizeof(header));
 	if(header.FID != this.File.Header.FID)
@@ -266,6 +324,15 @@ PUBLIC int SUFFIX_FileRead(uint8_t* data, uint16_t length)
 		break;
 	}
 	return SFS_OK;
+}
+
+int SUFFIX_Format()
+{
+	for (int i = 0; i < 4096; ++i)
+	{
+		if(IsBlockHealthy(i) != SFS_OK) continue;
+	}
+	return 0;
 }
 
 

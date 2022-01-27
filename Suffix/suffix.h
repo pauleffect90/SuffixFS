@@ -39,13 +39,19 @@ PUBLIC int SUFFIX_FileOpen(uint16_t startBlock);
 /// \return 1 on operation success.
 PUBLIC int SUFFIX_SeekToChunkID(uint32_t chunkID);
 
+/// Read the next page of a file.
+/// \param data Pointer to buffer.
+/// \param length How many bytes to read.
+/// \return 1 on operation success.
 PUBLIC int SUFFIX_FileRead(uint8_t* data, uint16_t length);
-
 
 /// Get the requested file size.
 /// \param startBlock The file starting block.
 /// \param endblock The file ending block.
 /// \return 1 on operation success.
 PUBLIC int SUFFIX_FileSize(uint32_t fileID, uint16_t startBlock, int* size);
+
+PUBLIC int SUFFIX_Format();
+
 
 #endif //SUFFIXFS_SUFFIX_H

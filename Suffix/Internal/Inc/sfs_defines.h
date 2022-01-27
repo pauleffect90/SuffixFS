@@ -6,6 +6,9 @@ typedef enum
     SFS_OK = 1,
     SFS_Error = 0,
 
+    SFS_ERROR_ECC = -1,
+    SFS_ERROR_PAGE_PROGRAM = -2,
+
 } SUFFIX_ERROR_CODES_typedef;
 
 typedef enum
